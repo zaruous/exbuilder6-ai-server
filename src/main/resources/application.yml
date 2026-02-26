@@ -9,7 +9,7 @@ spring:
 ai:
   generation:
     # 사용할 AI 서비스 선택: gemini, ollama, vllm
-    provider: gemini
+    provider: ollama
     
     # 서비스별 상세 접속 정보
     providers:

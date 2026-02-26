@@ -42,6 +42,11 @@ public class VllmAiClient implements AiClient {
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model", model);
         requestBody.put("prompt", request.getPrompt());
+        if (request.getSystemPrompt() != null) {
+            // vLLM completions API에서는 프롬프트 앞에 결합하거나 별도 파라미터로 처리 (vLLM 버전에 따라 다를 수 있음)
+            // 여기서는 프롬프트 앞에 지시사항으로 추가하는 방식 적용
+            requestBody.put("prompt", "System: " + request.getSystemPrompt() + "\n\nUser: " + request.getPrompt());
+        }
         requestBody.put("max_tokens", 2048);
         requestBody.put("stream", false);
         

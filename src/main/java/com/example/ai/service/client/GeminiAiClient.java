@@ -56,6 +56,17 @@ public class GeminiAiClient implements AiClient {
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("contents", List.of(contentPart));
         
+        // 시스템 프롬프트 추가 (system_instruction)
+        if (request.getSystemPrompt() != null) {
+            Map<String, Object> systemPart = new HashMap<>();
+            systemPart.put("text", request.getSystemPrompt());
+            
+            Map<String, Object> systemInstruction = new HashMap<>();
+            systemInstruction.put("parts", List.of(systemPart));
+            
+            requestBody.put("system_instruction", systemInstruction);
+        }
+        
         // 모델 옵션 (temperature 등) 적용
         if (settings != null && settings.getTemperature() != null) {
             Map<String, Object> generationConfig = new HashMap<>();

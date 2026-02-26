@@ -3,6 +3,7 @@ package com.example.ai.config;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
@@ -11,7 +12,7 @@ import java.util.Map;
  * AI 생성 엔진 및 연동 서비스의 설정을 관리하는 프로퍼티 클래스입니다.
  */
 @Data
-@Configuration
+@Component
 @ConfigurationProperties(prefix = "ai.generation")
 public class AiProperties {
     
