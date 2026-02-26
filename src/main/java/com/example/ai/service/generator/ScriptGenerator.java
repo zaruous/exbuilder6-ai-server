@@ -20,6 +20,7 @@ public class ScriptGenerator implements StageGenerator {
 
     private final AiProperties aiProperties;
     private final List<AiClient> aiClients;
+    private final AiResponseParser aiResponseParser;
     
     @Override
     public boolean supports(String stage) {
@@ -36,9 +37,19 @@ public class ScriptGenerator implements StageGenerator {
                 .findFirst()
                 .orElseThrow(() -> new RuntimeException("Unsupported AI provider: " + provider));
 
-        String jsCode = client.generateContent(request);
+        String content = client.generateContent(request);
+        GenerationResult parsed = aiResponseParser.parse(content);
 
-        builder.jsCode(jsCode)
-                .explanation("Controller JavaScript logic generated via " + provider);
+        if (parsed != null) {
+            if (parsed.getJsCode() != null) builder.jsCode(parsed.getJsCode());
+            if (parsed.getExplanation() != null) builder.explanation(parsed.getExplanation());
+            if (parsed.getLogs() != null) {
+                parsed.getLogs().forEach(builder::log);
+            }
+        } else {
+            log.info("Falling back to raw JavaScript Code: {}", content);
+            builder.jsCode(content)
+                    .explanation("Controller JavaScript logic generated via " + provider);
+        }
     }
 }

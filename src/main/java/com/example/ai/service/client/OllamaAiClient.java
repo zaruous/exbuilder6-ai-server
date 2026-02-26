@@ -31,12 +31,26 @@ public class OllamaAiClient implements AiClient {
         AiProperties.ProviderConfig defaultConfig = aiProperties.getProviders().get("ollama");
         GenerationSettings settings = request.getSettings();
         
-        // 요청 설정이 있으면 우선 적용, 없으면 시스템 설정값 사용
-        String model = (settings != null && settings.getProviderConfigs() != null && settings.getProviderConfigs().containsKey("ollama")) 
-                        ? settings.getProviderConfigs().get("ollama").getModelName() 
-                        : defaultConfig.getModel();
+        String model = null;
+        if (settings != null && settings.getProviderConfigs() != null) {
+            // 1. 만약 프론트엔드가 'web-service' 모드라면, 해당 모델명을 최우선으로 함
+            if ("web-service".equals(settings.getProvider()) && settings.getProviderConfigs().containsKey("web-service")) {
+                model = settings.getProviderConfigs().get("web-service").getModelName();
+            }
+            
+            // 2. 위에서 모델을 못 찾았고 'ollama' 설정이 있으면 사용
+            if ((model == null || model.isEmpty()) && settings.getProviderConfigs().containsKey("ollama")) {
+                model = settings.getProviderConfigs().get("ollama").getModelName();
+            }
+        }
+        
+        // 3. 최종적으로 없으면 시스템 설정값 사용
+        if (model == null || model.isEmpty()) {
+            model = defaultConfig.getModel();
+        }
+
         Double temperature = (settings != null && settings.getTemperature() != null) 
-                        ? settings.getTemperature() : 0.1; // Ollama의 기본 온도는 0.1로 낮게 설정하여 안정적인 응답을 유도;
+                        ? settings.getTemperature() : 0.1;
         
         String url = defaultConfig.getApiUrl() + "/api/generate";
         

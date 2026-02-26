@@ -20,6 +20,7 @@ public class SqlGenerator implements StageGenerator {
 
     private final AiProperties aiProperties;
     private final List<AiClient> aiClients;
+    private final AiResponseParser aiResponseParser;
 
     @Override
     public boolean supports(String stage) {
@@ -35,9 +36,19 @@ public class SqlGenerator implements StageGenerator {
                 .findFirst()
                 .orElseThrow(() -> new RuntimeException("Unsupported AI provider: " + provider));
 
-        String sqlCode = client.generateContent(request);
-        
-        builder.sqlCode(sqlCode)
-                .explanation("SQL generated via " + provider);
+        String content = client.generateContent(request);
+        GenerationResult parsed = aiResponseParser.parse(content);
+
+        if (parsed != null) {
+            if (parsed.getSqlCode() != null) builder.sqlCode(parsed.getSqlCode());
+            if (parsed.getExplanation() != null) builder.explanation(parsed.getExplanation());
+            if (parsed.getLogs() != null) {
+                parsed.getLogs().forEach(builder::log);
+            }
+        } else {
+            log.info("Falling back to raw SQL Code: {}", content);
+            builder.sqlCode(content)
+                   .explanation("SQL generated via " + provider);
+        }
     }
 }

@@ -32,9 +32,19 @@ public class GeminiAiClient implements AiClient {
         AiProperties.ProviderConfig defaultConfig = aiProperties.getProviders().get("gemini");
         GenerationSettings settings = request.getSettings();
         
-        String model = (settings != null && settings.getProviderConfigs() != null && settings.getProviderConfigs().containsKey("gemini")) 
-                        ? settings.getProviderConfigs().get("gemini").getModelName() 
-                        : defaultConfig.getModel();
+        String model = null;
+        if (settings != null && settings.getProviderConfigs() != null) {
+            if ("web-service".equals(settings.getProvider()) && settings.getProviderConfigs().containsKey("web-service")) {
+                model = settings.getProviderConfigs().get("web-service").getModelName();
+            }
+            if ((model == null || model.isEmpty()) && settings.getProviderConfigs().containsKey("gemini")) {
+                model = settings.getProviderConfigs().get("gemini").getModelName();
+            }
+        }
+
+        if (model == null || model.isEmpty()) {
+            model = defaultConfig.getModel();
+        }
         
         String baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent";
         String url = baseUrl + "?key=" + defaultConfig.getApiKey();

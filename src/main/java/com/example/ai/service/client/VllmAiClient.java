@@ -32,9 +32,19 @@ public class VllmAiClient implements AiClient {
         AiProperties.ProviderConfig defaultConfig = aiProperties.getProviders().get("vllm");
         GenerationSettings settings = request.getSettings();
 
-        String model = (settings != null && settings.getProviderConfigs() != null && settings.getProviderConfigs().containsKey("vllm")) 
-                        ? settings.getProviderConfigs().get("vllm").getModelName() 
-                        : defaultConfig.getModel();
+        String model = null;
+        if (settings != null && settings.getProviderConfigs() != null) {
+            if ("web-service".equals(settings.getProvider()) && settings.getProviderConfigs().containsKey("web-service")) {
+                model = settings.getProviderConfigs().get("web-service").getModelName();
+            }
+            if ((model == null || model.isEmpty()) && settings.getProviderConfigs().containsKey("vllm")) {
+                model = settings.getProviderConfigs().get("vllm").getModelName();
+            }
+        }
+        
+        if (model == null || model.isEmpty()) {
+            model = defaultConfig.getModel();
+        }
         
         String url = defaultConfig.getApiUrl() + "/v1/completions";
         log.info("Sending request to vLLM [Model: {}]", model);

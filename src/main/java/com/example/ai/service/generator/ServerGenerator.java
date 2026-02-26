@@ -22,6 +22,7 @@ public class ServerGenerator implements StageGenerator {
 
     private final AiProperties aiProperties;
     private final List<AiClient> aiClients;
+    private final AiResponseParser aiResponseParser;
     
     @Override
     public boolean supports(String stage) {
@@ -34,24 +35,28 @@ public class ServerGenerator implements StageGenerator {
         String basePkg = serverProps.getBasePackage();
         String provider = aiProperties.getProvider();
 
-        // 현재 설정된 AI 클라이언트 찾기
         AiClient client = aiClients.stream()
                 .filter(c -> c.supports(provider))
                 .findFirst()
                 .orElseThrow(() -> new RuntimeException("Unsupported AI provider: " + provider));
 
-        List<JavaFile> files = new ArrayList<>();
-        
-        // AI 클라이언트를 호출하여 코드 생성
-        String generatedLogic = client.generateContent(request);
+        String content = client.generateContent(request);
+        GenerationResult parsed = aiResponseParser.parse(content);
 
-        log.info("Generating server files for base package: {}", basePkg);
-        files.add(createJavaFile("ItemController.java", basePkg + "." + serverProps.getPackageMapping().get("controller"), "controller", generatedLogic));
-        files.add(createJavaFile("ItemService.java", basePkg + "." + serverProps.getPackageMapping().get("service"), "service", generatedLogic));
-        files.add(createJavaFile("ItemModel.java", basePkg + "." + serverProps.getPackageMapping().get("model"), "model", generatedLogic));
-        
-        builder.javaFiles(files)
-                .explanation("Spring Boot server components created using " + provider);
+        if (parsed != null && parsed.getJavaFiles() != null && !parsed.getJavaFiles().isEmpty()) {
+            builder.javaFiles(parsed.getJavaFiles());
+            if (parsed.getExplanation() != null) builder.explanation(parsed.getExplanation());
+            if (parsed.getLogs() != null) {
+                parsed.getLogs().forEach(builder::log);
+            }
+        } else {
+            log.info("Generating server files via template for provider: {}", provider);
+            builder.javaFile(createJavaFile("ItemController.java", basePkg + "." + serverProps.getPackageMapping().get("controller"), "controller", content));
+            builder.javaFile(createJavaFile("ItemService.java", basePkg + "." + serverProps.getPackageMapping().get("service"), "service", content));
+            builder.javaFile(createJavaFile("ItemModel.java", basePkg + "." + serverProps.getPackageMapping().get("model"), "model", content));
+            
+            builder.explanation("Spring Boot server components created using " + provider);
+        }
     }
 
     private JavaFile createJavaFile(String fileName, String packagePath, String type, String aiGeneratedContent) {
@@ -70,6 +75,7 @@ public class ServerGenerator implements StageGenerator {
                          "public class " + fileName.replace(".java", "") + " {\n" +
                          "    " + aiGeneratedContent + "\n" +
                          "}";
+        log.info("Generated content for {}: \n{}", fileName, content);
         file.setContent(content);
         return file;
     }
