@@ -29,6 +29,23 @@ ai:
       - layout
       - script
     
+    # MCP (Model Context Protocol) 설정
+    mcp:
+      enabled: false
+      servers:
+        - name: "sqlite-explorer"
+          url: "http://localhost:8001"
+        - name: "filesystem-tool"
+          url: "http://localhost:8002"
+        - name: "maven-agent"
+          url: "http://localhost:8003"
+      # 단계별 사용할 MCP 서버 지정
+      stage-servers:
+        sql: ["sqlite-explorer"]
+        server: ["filesystem-tool", "maven-agent"]
+        layout: ["filesystem-tool"]
+        script: ["filesystem-tool"]
+    
     server:
       base-package: com.example.resource.complex.item
       package-mapping:

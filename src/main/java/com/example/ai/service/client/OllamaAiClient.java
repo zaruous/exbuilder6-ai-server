@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
+import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 
@@ -73,6 +74,38 @@ public class OllamaAiClient implements AiClient {
         Map<String, Object> options = new HashMap<>();
         options.put("temperature", temperature);
         requestBody.put("options", options);
+
+        // MCP 설정 적용
+        boolean mcpEnabled = (settings != null && settings.getMcpEnabled() != null)
+                ? settings.getMcpEnabled() : aiProperties.getMcp().isEnabled();
+
+        if (mcpEnabled && aiProperties.getMcp().getServers() != null) {
+            List<Map<String, Object>> tools = new java.util.ArrayList<>();
+            
+            // 사용할 서버 이름 결정: 1. 요청 설정 -> 2. 단계별 설정 -> 3. 전체 서버
+            List<String> targetServerNames = null;
+            if (settings != null && settings.getMcpServers() != null) {
+                targetServerNames = settings.getMcpServers();
+            } else if (aiProperties.getMcp().getStageServers() != null && request.getStage() != null) {
+                targetServerNames = aiProperties.getMcp().getStageServers().get(request.getStage().toLowerCase());
+            }
+
+            for (AiProperties.McpServerConfig server : aiProperties.getMcp().getServers()) {
+                if (targetServerNames != null && !targetServerNames.contains(server.getName())) {
+                    continue;
+                }
+                Map<String, Object> tool = new HashMap<>();
+                tool.put("type", "mcp");
+                Map<String, Object> function = new HashMap<>();
+                function.put("name", server.getName());
+                function.put("description", "MCP Server: " + server.getUrl());
+                tool.put("function", function);
+                tools.add(tool);
+            }
+            if (!tools.isEmpty()) {
+                requestBody.put("tools", tools);
+            }
+        }
 
         try {
             Map<String, Object> response = restTemplate.postForObject(url, requestBody, Map.class);

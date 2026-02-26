@@ -13,6 +13,10 @@ public class GenerationSettings {
     private String basePackage;
     private String dbms;
 
+    // MCP 설정
+    private Boolean mcpEnabled;
+    private java.util.List<String> mcpServers;
+
     @Data
     public static class ProviderConfig {
         private String modelName;

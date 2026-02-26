@@ -36,6 +36,11 @@ public class AiProperties {
      */
     private ServerProperties server = new ServerProperties();
 
+    /**
+     * MCP (Model Context Protocol) 설정
+     */
+    private McpConfig mcp = new McpConfig();
+
     @Data
     public static class ProviderConfig {
         private String apiUrl;
@@ -51,5 +56,22 @@ public class AiProperties {
             "service", "service",
             "model", "model"
         );
+    }
+
+    @Data
+    public static class McpConfig {
+        private boolean enabled = false;
+        private List<McpServerConfig> servers;
+        /**
+         * 단계별(sql, layout, server, script) 사용할 MCP 서버 이름 목록
+         */
+        private Map<String, List<String>> stageServers;
+    }
+
+    @Data
+    public static class McpServerConfig {
+        private String name;
+        private String url;
+        private String apiKey;
     }
 }
