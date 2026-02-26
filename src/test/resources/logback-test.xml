@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- 테스트 시 콘솔에 즉각적으로 로그를 출력하기 위한 설정 -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %highlight(%-5level) %cyan(%logger{36}) - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- 애플리케이션 패키지 로그 레벨을 DEBUG로 설정하여 상세 정보 확인 -->
+    <logger name="com.example.ai" level="DEBUG" />
+    
+    <!-- 필수적인 Spring 로그만 출력 -->
+    <logger name="org.springframework" level="WARN" />
+
+    <root level="INFO">
+        <appender-ref ref="STDOUT" />
+    </root>
+</configuration>
