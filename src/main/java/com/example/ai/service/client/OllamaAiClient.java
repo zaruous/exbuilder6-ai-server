@@ -29,7 +29,7 @@ public class OllamaAiClient implements AiClient {
     private final McpService mcpService;
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private static final int MAX_ITERATIONS = 5;
+    private static final int MAX_ITERATIONS = 15;
 
     // 도구 이름과 해당 도구를 제공하는 MCP 서버 설정 간의 매핑을 저장
     private final Map<String, AiProperties.McpServerConfig> toolToServerMap = new HashMap<>();
@@ -115,21 +115,7 @@ public class OllamaAiClient implements AiClient {
         if (config == null) return "Error: MCP Server for tool '" + toolName + "' not found";
 
         try {
-            String responseJson = mcpService.callTool(config, toolName, arguments);
-            // MCP CallToolResult에서 텍스트 내용 추출
-            Map<String, Object> result = objectMapper.readValue(responseJson, new TypeReference<Map<String, Object>>() {});
-            List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
-            
-            if (content != null && !content.isEmpty()) {
-                StringBuilder sb = new StringBuilder();
-                for (Map<String, Object> item : content) {
-                    if ("text".equals(item.get("type"))) {
-                        sb.append(item.get("text"));
-                    }
-                }
-                return sb.toString();
-            }
-            return responseJson;
+            return mcpService.callTool(config, toolName, arguments);
         } catch (Exception e) {
             log.error("MCP Execution failed for tool {}: {}", toolName, e.getMessage());
             return "Execution Error: " + e.getMessage();
