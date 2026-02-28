@@ -30,11 +30,16 @@ public class SqlGenerator implements StageGenerator {
     @Override
     public void generate(GenerateRequest request, GenerationResult.GenerationResultBuilder builder) {
         String provider = aiProperties.getProvider();
-        log.info("Generating SQL using provider: {}", provider);
+        if (request.getSettings() != null && request.getSettings().getProvider() != null) {
+            provider = request.getSettings().getProvider();
+        }
+        
+        final String finalProvider = provider;
+        log.info("Generating SQL using provider: {}", finalProvider);
         AiClient client = aiClients.stream()
-                .filter(c -> c.supports(provider))
+                .filter(c -> c.supports(finalProvider))
                 .findFirst()
-                .orElseThrow(() -> new RuntimeException("Unsupported AI provider: " + provider));
+                .orElseThrow(() -> new RuntimeException("Unsupported AI provider: " + finalProvider));
 
         String content = client.generateContent(request);
         GenerationResult parsed = aiResponseParser.parse(content);
@@ -48,7 +53,7 @@ public class SqlGenerator implements StageGenerator {
         } else {
             log.info("Falling back to raw SQL Code: {}", content);
             builder.sqlCode(content)
-                   .explanation("SQL generated via " + provider);
+                   .explanation("SQL generated via " + finalProvider);
         }
     }
 }

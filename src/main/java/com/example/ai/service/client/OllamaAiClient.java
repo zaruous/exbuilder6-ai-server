@@ -1,18 +1,24 @@
 package com.example.ai.service.client;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestTemplate;
+
 import com.example.ai.config.AiProperties;
 import com.example.ai.dto.GenerateRequest;
 import com.example.ai.dto.GenerationSettings;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
-import java.util.List;
-import java.util.Map;
-import java.util.HashMap;
 
 /**
- * 로컬 Ollama 서비스와 실제 HTTP 통신을 수행하는 클라이언트입니다.
+ * 로컬 Ollama 서비스와 연동하며, MCP SSE 프로토콜의 세션 핸들링을 지원하는 에이전트 클라이언트입니다.
  */
 @Component
 @RequiredArgsConstructor
@@ -20,7 +26,13 @@ import java.util.HashMap;
 public class OllamaAiClient implements AiClient {
 
     private final AiProperties aiProperties;
+    private final McpService mcpService;
     private final RestTemplate restTemplate = new RestTemplate();
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private static final int MAX_ITERATIONS = 5;
+
+    // 도구 이름과 해당 도구를 제공하는 MCP 서버 설정 간의 매핑을 저장
+    private final Map<String, AiProperties.McpServerConfig> toolToServerMap = new HashMap<>();
 
     @Override
     public boolean supports(String provider) {
@@ -32,102 +44,163 @@ public class OllamaAiClient implements AiClient {
         AiProperties.ProviderConfig defaultConfig = aiProperties.getProviders().get("ollama");
         GenerationSettings settings = request.getSettings();
         
-        String model = null;
-        if (settings != null && settings.getProviderConfigs() != null) {
-            // 1. 만약 프론트엔드가 'web-service' 모드라면, 해당 모델명을 최우선으로 함
-            if ("web-service".equals(settings.getProvider()) && settings.getProviderConfigs().containsKey("web-service")) {
-                model = settings.getProviderConfigs().get("web-service").getModelName();
-            }
-            
-            // 2. 위에서 모델을 못 찾았고 'ollama' 설정이 있으면 사용
-            if ((model == null || model.isEmpty()) && settings.getProviderConfigs().containsKey("ollama")) {
-                model = settings.getProviderConfigs().get("ollama").getModelName();
-            }
-        }
+        String model = resolveModel(settings, defaultConfig);
+        Double temperature = (settings != null && settings.getTemperature() != null) ? settings.getTemperature() : 0.1;
         
-        // 3. 최종적으로 없으면 시스템 설정값 사용
-        if (model == null || model.isEmpty()) {
-            model = defaultConfig.getModel();
-        }
+        String url = defaultConfig.getApiUrl() + "/api/chat";
+        log.info("Starting Agent Loop with Ollama [Model: {}]", model);
 
-        Double temperature = (settings != null && settings.getTemperature() != null) 
-                        ? settings.getTemperature() : 0.1;
-        
-        String url = defaultConfig.getApiUrl() + "/api/generate";
-        
-        log.info("Sending request to Ollama: {} [Model: {}, Temp: {}]", url, model, temperature);
-
-        // 프롬프트 구성 시 히스토리(context)를 참고하여 컨텍스트 강화 가능
-        String finalPrompt = request.getPrompt();
-        if (request.getContext() != null) {
-            finalPrompt = "Previous context: " + request.getContext().getExplanation() + "\n\n" + finalPrompt;
-        }
-
-        Map<String, Object> requestBody = new HashMap<>();
-        requestBody.put("model", model);
-        requestBody.put("prompt", finalPrompt);
+        List<Map<String, Object>> messages = new ArrayList<>();
         if (request.getSystemPrompt() != null) {
-            requestBody.put("system", request.getSystemPrompt());
+            messages.add(Map.of("role", "system", "content", request.getSystemPrompt()));
         }
-        requestBody.put("stream", false);
-        
-        Map<String, Object> options = new HashMap<>();
-        options.put("temperature", temperature);
-        requestBody.put("options", options);
+        messages.add(Map.of("role", "user", "content", buildFinalPrompt(request)));
 
-        // MCP 설정 적용
-        boolean mcpEnabled = (settings != null && settings.getMcpEnabled() != null)
-                ? settings.getMcpEnabled() : aiProperties.getMcp().isEnabled();
+        boolean mcpEnabled = isMcpEnabled(settings);
+        List<Map<String, Object>> tools = prepareTools(request, settings);
 
-        if (mcpEnabled && aiProperties.getMcp().getServers() != null) {
-            List<Map<String, Object>> tools = new java.util.ArrayList<>();
+        for (int i = 1; i <= MAX_ITERATIONS; i++) {
+            log.info("Agent iteration {}/{}", i, MAX_ITERATIONS);
             
-            // 사용할 서버 이름 결정: 1. 요청 설정 -> 2. 단계별 설정 -> 3. 전체 서버
-            List<String> targetServerNames = null;
-            if (settings != null && settings.getMcpServers() != null) {
-                targetServerNames = settings.getMcpServers();
-            } else if (aiProperties.getMcp().getStageServers() != null && request.getStage() != null) {
-                targetServerNames = aiProperties.getMcp().getStageServers().get(request.getStage().toLowerCase());
-            }
-
-            for (AiProperties.McpServerConfig server : aiProperties.getMcp().getServers()) {
-                if (targetServerNames != null && !targetServerNames.contains(server.getName())) {
-                    continue;
-                }
-                Map<String, Object> tool = new HashMap<>();
-                tool.put("type", "mcp");
-                Map<String, Object> function = new HashMap<>();
-                function.put("name", server.getName());
-                function.put("description", "MCP Server: " + server.getUrl());
-                tool.put("function", function);
-                tools.add(tool);
-            }
-            if (!tools.isEmpty()) {
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("model", model);
+            requestBody.put("messages", messages);
+            requestBody.put("stream", false);
+            
+            if (mcpEnabled && !tools.isEmpty()) {
                 requestBody.put("tools", tools);
             }
+            requestBody.put("options", Map.of("temperature", temperature));
+
+            try {
+                Map<String, Object> response = restTemplate.postForObject(url, requestBody, Map.class);
+                if (response == null || !response.containsKey("message")) return "// Error: Invalid response";
+
+                Map<String, Object> assistantMessage = (Map<String, Object>) response.get("message");
+                messages.add(assistantMessage);
+
+                List<Map<String, Object>> toolCalls = (List<Map<String, Object>>) assistantMessage.get("tool_calls");
+                if (toolCalls == null || toolCalls.isEmpty()) {
+                    return (String) assistantMessage.get("content");
+                }
+
+                for (Map<String, Object> toolCall : toolCalls) {
+                    Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
+                    String toolName = (String) function.get("name");
+                    Map<String, Object> arguments = (Map<String, Object>) function.get("arguments");
+                    String toolCallId = (String) toolCall.get("id");
+
+                    log.info("Agent requesting tool execution: {} (ID: {})", toolName, toolCallId);
+                    String toolResult = executeMcpTool(toolName, arguments);
+                    
+                    Map<String, Object> toolMessage = new HashMap<>();
+                    toolMessage.put("role", "tool");
+                    toolMessage.put("content", toolResult);
+                    if (toolCallId != null) {
+                        toolMessage.put("tool_call_id", toolCallId);
+                    }
+                    messages.add(toolMessage);
+                }
+            } catch (Exception e) {
+            	e.printStackTrace();
+                log.error("Agent loop exception: {}", e.getMessage());
+                return "// Agent Error: " + e.getMessage();
+            }
         }
+        return "// Max iterations reached";
+    }
+
+    private String executeMcpTool(String toolName, Map<String, Object> arguments) {
+        AiProperties.McpServerConfig config = toolToServerMap.get(toolName);
+        if (config == null) return "Error: MCP Server for tool '" + toolName + "' not found";
 
         try {
-            Map<String, Object> response = restTemplate.postForObject(url, requestBody, Map.class);
-            return (response != null && response.containsKey("response")) ? (String) response.get("response") : "// No response";
+            String responseJson = mcpService.callTool(config, toolName, arguments);
+            // MCP CallToolResult에서 텍스트 내용 추출
+            Map<String, Object> result = objectMapper.readValue(responseJson, new TypeReference<Map<String, Object>>() {});
+            List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
+            
+            if (content != null && !content.isEmpty()) {
+                StringBuilder sb = new StringBuilder();
+                for (Map<String, Object> item : content) {
+                    if ("text".equals(item.get("type"))) {
+                        sb.append(item.get("text"));
+                    }
+                }
+                return sb.toString();
+            }
+            return responseJson;
         } catch (Exception e) {
-            log.error("Failed to call Ollama API: {}", e.getMessage());
-            return "// Error calling Ollama: " + e.getMessage();
+            log.error("MCP Execution failed for tool {}: {}", toolName, e.getMessage());
+            return "Execution Error: " + e.getMessage();
         }
     }
 
-    /**
-     * Ollama 서버의 버전을 확인합니다.
-     */
-    public String getVersion() {
-        AiProperties.ProviderConfig config = aiProperties.getProviders().get("ollama");
-        String url = config.getApiUrl() + "/api/version";
-        try {
-            Map<String, Object> response = restTemplate.getForObject(url, Map.class);
-            return (response != null && response.containsKey("version")) ? (String) response.get("version") : "unknown";
-        } catch (Exception e) {
-            log.error("Failed to get Ollama version: {}", e.getMessage());
-            return "error: " + e.getMessage();
+    private List<Map<String, Object>> prepareTools(GenerateRequest request, GenerationSettings settings) {
+        List<Map<String, Object>> tools = new ArrayList<>();
+        if (!isMcpEnabled(settings) || aiProperties.getMcp().getServers() == null) return tools;
+        
+        toolToServerMap.clear();
+
+        for (AiProperties.McpServerConfig s : aiProperties.getMcp().getServers()) {
+            try {
+                log.info("Fetching tools from MCP server: {}", s.getName());
+                String response = mcpService.listTools(s);
+                
+                Map<String, Object> result = objectMapper.readValue(response, new TypeReference<Map<String, Object>>() {});
+                List<Map<String, Object>> mcpTools = (List<Map<String, Object>>) result.get("tools");
+                
+                if (mcpTools != null) {
+                    for (Map<String, Object> t : mcpTools) {
+                        String name = (String) t.get("name");
+                        toolToServerMap.put(name, s);
+                        
+                        tools.add(Map.of(
+                            "type", "function",
+                            "function", Map.of(
+                                "name", name,
+                                "description", t.getOrDefault("description", ""),
+                                "parameters", t.getOrDefault("inputSchema", Map.of("type", "object", "properties", Map.of()))
+                            )
+                        ));
+                    }
+                }
+            } catch (Exception e) {
+            	e.printStackTrace();
+                log.warn("Failed to fetch tools from MCP server {}: {}", s.getName(), e.getMessage());
+            }
         }
+        return tools;
+    }
+
+    private String resolveModel(GenerationSettings settings, AiProperties.ProviderConfig defaultConfig) {
+        if (settings != null && settings.getProviderConfigs() != null) {
+            String m = null;
+            if ("web-service".equals(settings.getProvider())) m = settings.getProviderConfigs().get("web-service").getModelName();
+            if (m == null || m.isEmpty()) m = settings.getProviderConfigs().get("ollama").getModelName();
+            if (m != null && !m.isEmpty()) return m;
+        }
+        return defaultConfig.getModel();
+    }
+
+    private String buildFinalPrompt(GenerateRequest request) {
+        StringBuilder sb = new StringBuilder();
+        if (request.getContext() != null) {
+            if (request.getContext().getSqlCode() != null) sb.append("SQL Context:\n").append(request.getContext().getSqlCode()).append("\n\n");
+        }
+        sb.append("Request: ").append(request.getPrompt());
+        return sb.toString();
+    }
+
+    private boolean isMcpEnabled(GenerationSettings settings) {
+        return (settings != null && settings.getMcpEnabled() != null) 
+                ? settings.getMcpEnabled() : aiProperties.getMcp().isEnabled();
+    }
+
+    public String getVersion() {
+        try {
+            Map r = restTemplate.getForObject(aiProperties.getProviders().get("ollama").getApiUrl() + "/api/version", Map.class);
+            return r != null ? r.get("version").toString() : "unknown";
+        } catch (Exception e) { return "error"; }
     }
 }

@@ -13,7 +13,7 @@
     <!-- 필수적인 Spring 로그만 출력 -->
     <logger name="org.springframework" level="WARN" />
 
-    <root level="INFO">
+    <root level="DEBUG">
         <appender-ref ref="STDOUT" />
     </root>
 </configuration>

@@ -73,5 +73,6 @@ public class AiProperties {
         private String name;
         private String url;
         private String apiKey;
+        private String description;
     }
 }

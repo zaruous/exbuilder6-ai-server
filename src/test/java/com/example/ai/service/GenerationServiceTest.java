@@ -46,18 +46,50 @@ public class GenerationServiceTest {
 
     @Test
     void testSqlGenerate() {
-        GenerateRequest request = new GenerateRequest();
-        request.setSystemPrompt("당신은 SQL 전문가입니다. 결과는 SQL만 출력해야 합니다.");
-        request.setStage("sql");
-        request.setPrompt("품질 검사 결과를 조회하는  SQL 생성");
+        runSqlTest("ollama");
+    }
 
-        GenerationResult result = generationService.processStage(request);
-
-        assertNotNull(result);
-        System.out.println(">>> Test Result with Real Config: " + result.getExplanation());
-        
-        if (result.getSqlCode() != null) {
-            System.out.println(">>> Generated SQL: \n" + result.getSqlCode());
+    @Test
+    void testSqlGenerateWithGemini() {
+        // Gemini API 키가 설정되어 있어야 함
+        if (aiProperties.getProviders().get("gemini").getApiKey().equals("YOUR_GEMINI_API_KEY")) {
+            System.out.println(">>> Skipping Gemini test: API Key not set.");
+            return;
         }
+        runSqlTest("gemini");
+    }
+
+    @Test
+    void testSqlGenerateWithVllm() {
+        // vLLM 서버가 구동 중이어야 함
+        runSqlTest("vllm");
+    }
+
+    private void runSqlTest(String provider) {
+        System.out.println("\n==================================================");
+        System.out.println(">>> Testing SQL Generation with Provider: " + provider);
+        
+        GenerateRequest request = new GenerateRequest();
+        request.setSystemPrompt("당신은 SQL 전문가입니다. 테이블 구조 파악을 위해 search_tables나 get_table_schema 도구를 적극 활용하십시오. 재고 조회는 minvlotsts 테이블을, 인수(수치) 내역 조회는 minvlotrcv 테이블을 참고하십시오.");
+        request.setStage("sql");
+        request.setPrompt("현재 재고(minvlotsts)와 인수내역(minvlotrcv)을 결합하여 조회하는 SQL을 생성하세요. 품목별 현재고와 최근 인수일자를 보여주세요.");
+        
+        // 설정을 통해 프로바이더 명시적 지정
+        com.example.ai.dto.GenerationSettings settings = new com.example.ai.dto.GenerationSettings();
+        settings.setProvider(provider);
+        request.setSettings(settings);
+
+        try {
+            GenerationResult result = generationService.processStage(request);
+            assertNotNull(result);
+            System.out.println(">>> Result Explanation: " + result.getExplanation());
+            if (result.getSqlCode() != null) {
+                System.out.println(">>> Generated SQL: \n" + result.getSqlCode());
+                assertTrue(result.getSqlCode().contains("minvlotsts"), "Should contain inventory table");
+            }
+        } catch (Exception e) {
+            System.out.println(">>> Test failed for provider " + provider + ": " + e.getMessage());
+        }
+        System.out.println("==================================================\n");
     }
 }

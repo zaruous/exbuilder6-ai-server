@@ -3,16 +3,19 @@ package com.example.ai.service.client;
 import com.example.ai.config.AiProperties;
 import com.example.ai.dto.GenerateRequest;
 import com.example.ai.dto.GenerationSettings;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 
 /**
- * Google Gemini API와 실제 HTTP 통신을 수행하는 클라이언트입니다.
+ * Google Gemini API와 연동하며, MCP 도구 호출을 지원하는 에이전트 클라이언트입니다.
  */
 @Component
 @RequiredArgsConstructor
@@ -20,7 +23,13 @@ import java.util.HashMap;
 public class GeminiAiClient implements AiClient {
 
     private final AiProperties aiProperties;
+    private final McpService mcpService;
     private final RestTemplate restTemplate = new RestTemplate();
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private static final int MAX_ITERATIONS = 5;
+
+    // 도구 이름과 해당 도구를 제공하는 MCP 서버 설정 간의 매핑을 저장
+    private final Map<String, AiProperties.McpServerConfig> toolToServerMap = new HashMap<>();
 
     @Override
     public boolean supports(String provider) {
@@ -32,108 +41,172 @@ public class GeminiAiClient implements AiClient {
         AiProperties.ProviderConfig defaultConfig = aiProperties.getProviders().get("gemini");
         GenerationSettings settings = request.getSettings();
         
-        String model = null;
-        if (settings != null && settings.getProviderConfigs() != null) {
-            if ("web-service".equals(settings.getProvider()) && settings.getProviderConfigs().containsKey("web-service")) {
-                model = settings.getProviderConfigs().get("web-service").getModelName();
-            }
-            if ((model == null || model.isEmpty()) && settings.getProviderConfigs().containsKey("gemini")) {
-                model = settings.getProviderConfigs().get("gemini").getModelName();
-            }
-        }
-
-        if (model == null || model.isEmpty()) {
-            model = defaultConfig.getModel();
-        }
+        String model = resolveModel(settings, defaultConfig);
+        String url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + defaultConfig.getApiKey();
         
-        String baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent";
-        String url = baseUrl + "?key=" + defaultConfig.getApiKey();
+        log.info("Starting Agent Loop with Gemini [Model: {}]", model);
+
+        List<Map<String, Object>> contents = new ArrayList<>();
         
-        log.info("Sending request to Gemini API [Model: {}]", model);
-
-        // 컨텍스트 포함 프롬프트 구성
-        String prompt = request.getPrompt();
-        if (request.getContext() != null && request.getContext().getExplanation() != null) {
-            prompt = "Context of previous step: " + request.getContext().getExplanation() + "\nRequest: " + prompt;
-        }
-
-        Map<String, Object> textPart = new HashMap<>();
-        textPart.put("text", prompt);
-
-        Map<String, Object> contentPart = new HashMap<>();
-        contentPart.put("parts", List.of(textPart));
+        // 1. 초기 사용자 프롬프트 구성
+        Map<String, Object> userContent = new HashMap<>();
+        userContent.put("role", "user");
+        userContent.put("parts", List.of(Map.of("text", buildFinalPrompt(request))));
+        contents.add(userContent);
 
         Map<String, Object> requestBody = new HashMap<>();
-        requestBody.put("contents", List.of(contentPart));
         
-        // 시스템 프롬프트 추가 (system_instruction)
+        // 시스템 프롬프트 (system_instruction)
         if (request.getSystemPrompt() != null) {
-            Map<String, Object> systemPart = new HashMap<>();
-            systemPart.put("text", request.getSystemPrompt());
-            
-            Map<String, Object> systemInstruction = new HashMap<>();
-            systemInstruction.put("parts", List.of(systemPart));
-            
-            requestBody.put("system_instruction", systemInstruction);
+            requestBody.put("system_instruction", Map.of("parts", List.of(Map.of("text", request.getSystemPrompt()))));
         }
         
-        // 모델 옵션 (temperature 등) 적용
+        // 생성 설정 (temperature 등)
         if (settings != null && settings.getTemperature() != null) {
-            Map<String, Object> generationConfig = new HashMap<>();
-            generationConfig.put("temperature", settings.getTemperature());
-            requestBody.put("generationConfig", generationConfig);
+            requestBody.put("generationConfig", Map.of("temperature", settings.getTemperature()));
         }
 
-        // MCP 설정 적용
-        boolean mcpEnabled = (settings != null && settings.getMcpEnabled() != null)
-                ? settings.getMcpEnabled() : aiProperties.getMcp().isEnabled();
+        // 도구 준비
+        List<Map<String, Object>> tools = prepareTools(request, settings);
+        if (!tools.isEmpty()) {
+            requestBody.put("tools", List.of(Map.of("function_declarations", tools)));
+        }
 
-        if (mcpEnabled) {
-            List<Map<String, Object>> tools = new java.util.ArrayList<>();
-            
-            // 사용할 서버 이름 결정: 1. 요청 설정 -> 2. 단계별 설정 -> 3. 전체 서버
-            List<String> targetServerNames = null;
-            if (settings != null && settings.getMcpServers() != null) {
-                targetServerNames = settings.getMcpServers();
-            } else if (aiProperties.getMcp().getStageServers() != null && request.getStage() != null) {
-                targetServerNames = aiProperties.getMcp().getStageServers().get(request.getStage().toLowerCase());
-            }
+        for (int i = 1; i <= MAX_ITERATIONS; i++) {
+            log.info("Gemini Agent iteration {}/{}", i, MAX_ITERATIONS);
+            requestBody.put("contents", contents);
 
-            if (aiProperties.getMcp().getServers() != null) {
-                for (AiProperties.McpServerConfig server : aiProperties.getMcp().getServers()) {
-                    // 특정 서버 목록이 지정된 경우 필터링
-                    if (targetServerNames != null && !targetServerNames.contains(server.getName())) {
-                        continue;
+            try {
+                Map<String, Object> response = restTemplate.postForObject(url, requestBody, Map.class);
+                if (response == null || !response.containsKey("candidates")) return "// Error: Invalid Gemini response";
+
+                List<Map<String, Object>> candidates = (List<Map<String, Object>>) response.get("candidates");
+                if (candidates.isEmpty()) return "// Error: No candidates in response";
+
+                Map<String, Object> candidate = candidates.get(0);
+                Map<String, Object> assistantContent = (Map<String, Object>) candidate.get("content");
+                contents.add(assistantContent);
+
+                List<Map<String, Object>> parts = (List<Map<String, Object>>) assistantContent.get("parts");
+                List<Map<String, Object>> toolCalls = new ArrayList<>();
+                String textResponse = null;
+
+                for (Map<String, Object> part : parts) {
+                    if (part.containsKey("functionCall")) {
+                        toolCalls.add((Map<String, Object>) part.get("functionCall"));
+                    } else if (part.containsKey("text")) {
+                        textResponse = (String) part.get("text");
                     }
-                    
-                    Map<String, Object> mcpTool = new HashMap<>();
-                    Map<String, Object> mcpConfig = new HashMap<>();
-                    mcpConfig.put("name", server.getName());
-                    mcpConfig.put("url", server.getUrl());
-                    mcpTool.put("mcp", mcpConfig);
-                    tools.add(mcpTool);
                 }
-            }
-            
-            if (!tools.isEmpty()) {
-                requestBody.put("tools", tools);
+
+                if (toolCalls.isEmpty()) {
+                    return textResponse != null ? textResponse : "// Error: Empty part response";
+                }
+
+                // 도구 실행 처리
+                List<Map<String, Object>> toolResponseParts = new ArrayList<>();
+                for (Map<String, Object> toolCall : toolCalls) {
+                    String toolName = (String) toolCall.get("name");
+                    Map<String, Object> arguments = (Map<String, Object>) toolCall.get("args");
+
+                    log.info("Gemini requesting tool: {}", toolName);
+                    String toolResult = executeMcpTool(toolName, arguments);
+                    
+                    Map<String, Object> toolResponsePart = new HashMap<>();
+                    toolResponsePart.put("functionResponse", Map.of(
+                        "name", toolName,
+                        "response", Map.of("content", toolResult)
+                    ));
+                    toolResponseParts.add(toolResponsePart);
+                }
+
+                Map<String, Object> toolResponseContent = new HashMap<>();
+                toolResponseContent.put("role", "function");
+                toolResponseContent.put("parts", toolResponseParts);
+                contents.add(toolResponseContent);
+
+            } catch (Exception e) {
+                log.error("Gemini agent loop error: {}", e.getMessage(), e);
+                return "// Agent Error: " + e.getMessage();
             }
         }
+
+        return "// Max iterations reached";
+    }
+
+    private String executeMcpTool(String toolName, Map<String, Object> arguments) {
+        AiProperties.McpServerConfig config = toolToServerMap.get(toolName);
+        if (config == null) return "Error: Tool server not found";
 
         try {
-            Map<String, Object> response = restTemplate.postForObject(url, requestBody, Map.class);
-            if (response != null && response.containsKey("candidates")) {
-                List<Map<String, Object>> candidates = (List<Map<String, Object>>) response.get("candidates");
-                if (!candidates.isEmpty()) {
-                    Map<String, Object> content = (Map<String, Object>) candidates.get(0).get("content");
-                    List<Map<String, Object>> parts = (List<Map<String, Object>>) content.get("parts");
-                    return (String) parts.get(0).get("text");
+            String responseJson = mcpService.callTool(config, toolName, arguments);
+            // REST Bridge 응답(JSON)에서 텍스트 추출 시도
+            try {
+                Map<String, Object> result = objectMapper.readValue(responseJson, new TypeReference<Map<String, Object>>() {});
+                if (result.containsKey("content")) {
+                    List<Map<String, Object>> contentList = (List<Map<String, Object>>) result.get("content");
+                    StringBuilder sb = new StringBuilder();
+                    for (Map<String, Object> item : contentList) {
+                        if ("text".equals(item.get("type"))) sb.append(item.get("text"));
+                    }
+                    return sb.toString();
                 }
-            }
-            return "// No content generated";
+            } catch (Exception ignored) {}
+            return responseJson;
         } catch (Exception e) {
-            log.error("Failed to call Gemini API: {}", e.getMessage());
-            return "// Error calling Gemini API: " + e.getMessage();
+            return "Execution Error: " + e.getMessage();
         }
+    }
+
+    private List<Map<String, Object>> prepareTools(GenerateRequest request, GenerationSettings settings) {
+        List<Map<String, Object>> toolDeclarations = new ArrayList<>();
+        if (aiProperties.getMcp().getServers() == null) return toolDeclarations;
+        
+        toolToServerMap.clear();
+        for (AiProperties.McpServerConfig s : aiProperties.getMcp().getServers()) {
+            try {
+                String response = mcpService.listTools(s);
+                Map<String, Object> result = objectMapper.readValue(response, new TypeReference<Map<String, Object>>() {});
+                List<Map<String, Object>> mcpTools = (List<Map<String, Object>>) result.get("tools");
+                
+                if (mcpTools != null) {
+                    for (Map<String, Object> t : mcpTools) {
+                        String name = (String) t.get("name");
+                        toolToServerMap.put(name, s);
+                        
+                        Map<String, Object> decl = new HashMap<>();
+                        decl.put("name", name);
+                        decl.put("description", t.getOrDefault("description", ""));
+                        
+                        // Gemini는 inputSchema의 'properties'를 'parameters'로 사용
+                        Map<String, Object> mcpSchema = (Map<String, Object>) t.get("inputSchema");
+                        if (mcpSchema != null) {
+                            decl.put("parameters", mcpSchema);
+                        }
+                        
+                        toolDeclarations.add(decl);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Failed to load tools from {}: {}", s.getName(), e.getMessage());
+            }
+        }
+        return toolDeclarations;
+    }
+
+    private String resolveModel(GenerationSettings settings, AiProperties.ProviderConfig defaultConfig) {
+        if (settings != null && settings.getProviderConfigs() != null && settings.getProviderConfigs().containsKey("gemini")) {
+            return settings.getProviderConfigs().get("gemini").getModelName();
+        }
+        return defaultConfig.getModel();
+    }
+
+    private String buildFinalPrompt(GenerateRequest request) {
+        StringBuilder sb = new StringBuilder();
+        if (request.getContext() != null) {
+            sb.append("Previous Context:\n").append(request.getContext().getExplanation()).append("\n\n");
+        }
+        sb.append("Request: ").append(request.getPrompt());
+        return sb.toString();
     }
 }

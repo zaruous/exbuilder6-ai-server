@@ -15,10 +15,10 @@ ai:
     providers:
       gemini:
         api-key: "AIzaSyByrLy3qQ8AcvlgGy4yeh3qXYRnjsaz_04"
-        model: "Gemini 2 Flash"
+        model: "gemini-2.0-flash"
       ollama:
         api-url: "http://localhost:11434"
-        model: "glm-4.7:cloud"
+        model: "glm-5:cloud"
       vllm:
         api-url: "http://your-vllm-host:8000"
         model: "your-model-name"
@@ -31,20 +31,21 @@ ai:
     
     # MCP (Model Context Protocol) 설정
     mcp:
-      enabled: false
+      enabled: true
       servers:
-        - name: "sqlite-explorer"
-          url: "http://localhost:8001"
-        - name: "filesystem-tool"
-          url: "http://localhost:8002"
-        - name: "maven-agent"
-          url: "http://localhost:8003"
+        - name: "dbhelper"
+          url: "http://localhost:7070/sse"
+          description : "테이블 스크립트 생성시 데이터베이스에 관한 정보를 제공합니다."
+        # - name: "filesystem-tool"
+        #   url: "http://localhost:8002"
+        # - name: "maven-agent"
+        #   url: "http://localhost:8003"
       # 단계별 사용할 MCP 서버 지정
       stage-servers:
-        sql: ["sqlite-explorer"]
-        server: ["filesystem-tool", "maven-agent"]
-        layout: ["filesystem-tool"]
-        script: ["filesystem-tool"]
+        sql: ["dbhelper"]
+        # server: ["filesystem-tool", "maven-agent"]
+        # layout: ["filesystem-tool"]
+        # script: ["filesystem-tool"]
     
     server:
       base-package: com.example.resource.complex.item
