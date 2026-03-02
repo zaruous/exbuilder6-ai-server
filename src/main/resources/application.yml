@@ -36,6 +36,47 @@ ai:
         - name: "dbhelper"
           url: "http://localhost:7070/sse"
           description : "테이블 스크립트 생성시 데이터베이스에 관한 정보를 제공합니다."
+          tools:
+            - name: "get_table_list"
+              description: "DB 테이블 목록을 100개까지 조회합니다."
+              inputSchema:
+                type: "object"
+                properties: {}
+            - name: "search_tables"
+              description: "테이블 이름에 포함된 키워드로 검색합니다."
+              inputSchema:
+                type: "object"
+                properties:
+                  query: { type: "string" }
+                required: ["query"]
+            - name: "get_table_schema"
+              description: "특정 테이블의 상세 스키마(컬럼 정보)를 조회합니다."
+              inputSchema:
+                type: "object"
+                properties:
+                  tableName: { type: "string" }
+                required: ["tableName"]
+            - name: "read_query"
+              description: "SELECT SQL 쿼리를 실행하여 데이터를 확인합니다."
+              inputSchema:
+                type: "object"
+                properties:
+                  sql: { type: "string" }
+                required: ["sql"]
+            - name: "write_query"
+              description: "CUD(Insert/Update/Delete) SQL 쿼리를 실행합니다."
+              inputSchema:
+                type: "object"
+                properties:
+                  sql: { type: "string" }
+                required: ["sql"]
+            - name: "explain_query"
+              description: "SQL의 실행 계획(Execution Plan)을 분석합니다."
+              inputSchema:
+                type: "object"
+                properties:
+                  sql: { type: "string" }
+                required: ["sql"]
         # - name: "filesystem-tool"
         #   url: "http://localhost:8002"
         # - name: "maven-agent"

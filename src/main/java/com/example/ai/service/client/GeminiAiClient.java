@@ -160,10 +160,23 @@ public class GeminiAiClient implements AiClient {
 
     private List<Map<String, Object>> prepareTools(GenerateRequest request, GenerationSettings settings) {
         List<Map<String, Object>> toolDeclarations = new ArrayList<>();
-        if (aiProperties.getMcp().getServers() == null) return toolDeclarations;
+        if (aiProperties.getMcp() == null || aiProperties.getMcp().getServers() == null) return toolDeclarations;
         
+        // MCP 활성화 여부 확인
+        boolean mcpEnabled = (settings != null && settings.getMcpEnabled() != null) 
+                            ? settings.getMcpEnabled() 
+                            : aiProperties.getMcp().isEnabled();
+        if (!mcpEnabled) return toolDeclarations;
+
+        List<String> targetServers = (settings != null) ? settings.getMcpServers() : null;
         toolToServerMap.clear();
+
         for (AiProperties.McpServerConfig s : aiProperties.getMcp().getServers()) {
+            // 요청에 특정 서버 목록이 지정된 경우 필터링
+            if (targetServers != null && !targetServers.isEmpty() && !targetServers.contains(s.getName())) {
+                continue;
+            }
+
             try {
                 String response = mcpService.listTools(s);
                 Map<String, Object> result = objectMapper.readValue(response, new TypeReference<Map<String, Object>>() {});

@@ -74,5 +74,19 @@ public class AiProperties {
         private String url;
         private String apiKey;
         private String description;
+        /**
+         * 해당 MCP 서버에서 제공하는 도구 목록
+         */
+        private List<McpToolConfig> tools;
+    }
+
+    @Data
+    public static class McpToolConfig {
+        private String name;
+        private String description;
+        /**
+         * 도구의 입력 스키마 (JSON 형태)
+         */
+        private Map<String, Object> inputSchema;
     }
 }

@@ -25,41 +25,36 @@ public class McpService {
             .build();
 
     /**
-     * MCP 서버로부터 사용 가능한 도구 목록을 반환합니다. (Hardcoded API Specification)
-     * SSE 통신을 배제하여 타임아웃을 방지합니다.
+     * MCP 서버로부터 사용 가능한 도구 목록을 반환합니다.
+     * 설정 파일(application.yml)에 등록된 도구 목록을 즉시 반환하여 SSE 핸드셰이크 지연을 방지합니다.
      */
     public String listTools(McpServerConfig config) {
-        log.info("Returning tools specification via REST Bridge (Bypassing SSE Handshake)");
+        log.info("Returning tools specification for MCP server '{}' from configuration", config.getName());
         
-        // MCP tools/list 스펙에 맞게 하드코딩하여 즉시 반환 (속도 극대화)
-        return "{\"tools\":[" +
-                "{\"name\":\"get_table_list\",\"description\":\"DB 테이블 목록을 100개까지 조회합니다.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}}}," +
-                "{\"name\":\"search_tables\",\"description\":\"테이블 이름에 포함된 키워드로 검색합니다.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}},\"required\":[\"query\"]}}," +
-                "{\"name\":\"get_table_schema\",\"description\":\"특정 테이블의 상세 스키마(컬럼 정보)를 조회합니다.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"tableName\":{\"type\":\"string\"}},\"required\":[\"tableName\"]}}," +
-                "{\"name\":\"read_query\",\"description\":\"SELECT SQL 쿼리를 실행하여 데이터를 확인합니다.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"sql\":{\"type\":\"string\"}},\"required\":[\"sql\"]}}," +
-                "{\"name\":\"write_query\",\"description\":\"CUD(Insert/Update/Delete) SQL 쿼리를 실행합니다.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"sql\":{\"type\":\"string\"}},\"required\":[\"sql\"]}}," +
-                "{\"name\":\"explain_query\",\"description\":\"SQL의 실행 계획(Execution Plan)을 분석합니다.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"sql\":{\"type\":\"string\"}},\"required\":[\"sql\"]}}" +
-                "]}";
+        try {
+            if (config.getTools() == null || config.getTools().isEmpty()) {
+                log.warn("No tools defined for MCP server: {}", config.getName());
+                return "{\"tools\":[]}";
+            }
+            return objectMapper.writeValueAsString(Map.of("tools", config.getTools()));
+        } catch (Exception e) {
+            log.error("Failed to serialize tools for {}: {}", config.getName(), e.getMessage());
+            return "{\"tools\":[], \"error\":\"" + e.getMessage() + "\"}";
+        }
     }
 
     /**
      * MCP 서버에 REST API를 통해 도구 실행을 직접 요청합니다.
      */
     public String callTool(McpServerConfig config, String toolName, Map<String, Object> arguments) {
-        // 기존 sse endpoint 에서 /sse 를 제거하여 base URL 획득 (예: http://localhost:7070)
-        String baseUrl = config.getUrl().replace("/sse", "").replace("?sessionId=", "");
-        if (baseUrl.contains("/messages")) {
-            baseUrl = baseUrl.substring(0, baseUrl.indexOf("/messages"));
-        }
-        final String finalBaseUrl = baseUrl;
-        
-        log.info("Calling tool '{}' via REST Bridge at {}", toolName, finalBaseUrl);
+        String baseUrl = getBaseRestUrl(config.getUrl());
+        log.info("Calling tool '{}' via REST Bridge at {}", toolName, baseUrl);
 
         try {
             switch (toolName) {
                 case "get_table_list":
                     return webClient.get()
-                            .uri(finalBaseUrl + "/tables")
+                            .uri(baseUrl + "/tables")
                             .retrieve()
                             .bodyToMono(String.class)
                             .block(java.time.Duration.ofSeconds(10));
@@ -67,7 +62,7 @@ public class McpService {
                 case "search_tables":
                     String query = (String) arguments.get("query");
                     return webClient.get()
-                            .uri(finalBaseUrl + "/tables/search?q={query}", query)
+                            .uri(baseUrl + "/tables/search?q={query}", query)
                             .retrieve()
                             .bodyToMono(String.class)
                             .block(java.time.Duration.ofSeconds(10));
@@ -75,47 +70,45 @@ public class McpService {
                 case "get_table_schema":
                     String tableName = (String) arguments.get("tableName");
                     return webClient.get()
-                            .uri(finalBaseUrl + "/tables/" + tableName + "/schema")
+                            .uri(baseUrl + "/tables/" + tableName + "/schema")
                             .retrieve()
                             .bodyToMono(String.class)
                             .block(java.time.Duration.ofSeconds(10));
                             
                 case "read_query":
-                    String readSql = (String) arguments.get("sql");
-                    return webClient.post()
-                            .uri(finalBaseUrl + "/query/read")
-                            .contentType(MediaType.TEXT_PLAIN)
-                            .bodyValue(readSql)
-                            .retrieve()
-                            .bodyToMono(String.class)
-                            .block(java.time.Duration.ofSeconds(15));
-                            
                 case "write_query":
-                    String writeSql = (String) arguments.get("sql");
+                case "explain_query":
+                    String endpoint = toolName.replace("_query", ""); // read, write, explain
+                    String sql = (String) arguments.get("sql");
                     return webClient.post()
-                            .uri(finalBaseUrl + "/query/write")
+                            .uri(baseUrl + "/query/" + endpoint)
                             .contentType(MediaType.TEXT_PLAIN)
-                            .bodyValue(writeSql)
+                            .bodyValue(sql)
                             .retrieve()
                             .bodyToMono(String.class)
                             .block(java.time.Duration.ofSeconds(15));
-                            
-                case "explain_query":
-                    String explainSql = (String) arguments.get("sql");
-                    return webClient.post()
-                            .uri(finalBaseUrl + "/query/explain")
-                            .contentType(MediaType.TEXT_PLAIN)
-                            .bodyValue(explainSql)
-                            .retrieve()
-                            .bodyToMono(String.class)
-                            .block(java.time.Duration.ofSeconds(10));
                             
                 default:
                     throw new UnsupportedOperationException("Unsupported tool requested: " + toolName);
             }
         } catch (Exception e) {
-            log.error("Tool execution failed: {}", e.getMessage());
+            log.error("Tool execution failed ({}): {}", toolName, e.getMessage());
             return "{\"error\":\"Tool execution failed: " + e.getMessage() + "\"}";
         }
+    }
+
+    /**
+     * SSE URL에서 REST API 호출을 위한 Base URL을 추출합니다.
+     */
+    private String getBaseRestUrl(String sseUrl) {
+        String baseUrl = sseUrl.replace("/sse", "").replace("?sessionId=", "");
+        if (baseUrl.contains("/messages")) {
+            baseUrl = baseUrl.substring(0, baseUrl.indexOf("/messages"));
+        }
+        // 트레일링 슬래시 제거
+        if (baseUrl.endsWith("/")) {
+            baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+        }
+        return baseUrl;
     }
 }

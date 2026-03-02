@@ -29,10 +29,24 @@ public class SqlGenerator implements StageGenerator {
 
     @Override
     public void generate(GenerateRequest request, GenerationResult.GenerationResultBuilder builder) {
-        String provider = aiProperties.getProvider();
-        if (request.getSettings() != null && request.getSettings().getProvider() != null) {
-            provider = request.getSettings().getProvider();
+        // 1. MCP 서버 설정 적용 (sql 단계에 할당된 서버 목록 추출)
+        if (aiProperties.getMcp() != null && aiProperties.getMcp().getStageServers() != null) {
+            List<String> sqlMcpServers = aiProperties.getMcp().getStageServers().get("sql");
+            if (sqlMcpServers != null && !sqlMcpServers.isEmpty()) {
+                log.info("Assigning MCP servers for SQL stage: {}", sqlMcpServers);
+                if (request.getSettings() == null) {
+                    request.setSettings(new com.example.ai.dto.GenerationSettings());
+                }
+                request.getSettings().setMcpServers(sqlMcpServers);
+                request.getSettings().setMcpEnabled(true);
+            }
         }
+
+        String provider = aiProperties.getProvider();
+        
+        // if (request.getSettings() != null && request.getSettings().getProvider() != null) {
+        //     provider = request.getSettings().getProvider();
+        // }
         
         final String finalProvider = provider;
         log.info("Generating SQL using provider: {}", finalProvider);

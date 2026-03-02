@@ -42,9 +42,10 @@ public class OllamaAiClient implements AiClient {
     @Override
     public String generateContent(GenerateRequest request) {
         AiProperties.ProviderConfig defaultConfig = aiProperties.getProviders().get("ollama");
+        String model = defaultConfig.getModel();
         GenerationSettings settings = request.getSettings();
         
-        String model = resolveModel(settings, defaultConfig);
+        //String model = resolveModel(settings, defaultConfig);
         Double temperature = (settings != null && settings.getTemperature() != null) ? settings.getTemperature() : 0.1;
         
         String url = defaultConfig.getApiUrl() + "/api/chat";
@@ -64,7 +65,7 @@ public class OllamaAiClient implements AiClient {
             
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("model", model);
-            requestBody.put("messages", messages);
+            requestBody.put("messages", messages); 
             requestBody.put("stream", false);
             
             if (mcpEnabled && !tools.isEmpty()) {
@@ -159,15 +160,15 @@ public class OllamaAiClient implements AiClient {
         return tools;
     }
 
-    private String resolveModel(GenerationSettings settings, AiProperties.ProviderConfig defaultConfig) {
-        if (settings != null && settings.getProviderConfigs() != null) {
-            String m = null;
-            if ("web-service".equals(settings.getProvider())) m = settings.getProviderConfigs().get("web-service").getModelName();
-            if (m == null || m.isEmpty()) m = settings.getProviderConfigs().get("ollama").getModelName();
-            if (m != null && !m.isEmpty()) return m;
-        }
-        return defaultConfig.getModel();
-    }
+//    private String resolveModel(GenerationSettings settings, AiProperties.ProviderConfig defaultConfig) {
+//        if (settings != null && settings.getProviderConfigs() != null) {
+//            String m = null;
+//            if ("web-service".equals(settings.getProvider())) m = settings.getProviderConfigs().get("web-service").getModelName();
+//            if (m == null || m.isEmpty()) m = settings.getProviderConfigs().get("ollama").getModelName();
+//            if (m != null && !m.isEmpty()) return m;
+//        }
+//        return defaultConfig.getModel();
+//    }
 
     private String buildFinalPrompt(GenerateRequest request) {
         StringBuilder sb = new StringBuilder();
