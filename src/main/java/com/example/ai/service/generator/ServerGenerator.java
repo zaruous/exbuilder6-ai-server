@@ -1,16 +1,22 @@
 package com.example.ai.service.generator;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.util.List;
+import java.util.stream.Collectors;
+
+import org.springframework.stereotype.Component;
+
 import com.example.ai.config.AiProperties;
 import com.example.ai.dto.GenerateRequest;
 import com.example.ai.dto.GenerationResult;
 import com.example.ai.dto.JavaFile;
 import com.example.ai.service.client.AiClient;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
-
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * AI 서비스를 통해 Spring Boot 서버 코드를 생성하는 생성기입니다.
@@ -28,9 +34,38 @@ public class ServerGenerator implements StageGenerator {
     public boolean supports(String stage) {
         return "server".equalsIgnoreCase(stage);
     }
+    
+    private String cachePrompt = null;
+	String loadPromptFromFile() throws IOException {
+		try(InputStream inputStream = getClass().getClassLoader().getResourceAsStream("prompts/서버생성프롬프트.md")){
+    		if (inputStream != null) {
+        	    String str = new String(inputStream.readAllBytes());
+        	    System.out.println(str);
+        	    return str;
+        	} else {
+        	    System.err.println("File not found: prompts/서버생성프롬프트.md");
+        	}	
+    	} catch (IOException e) {
+			e.printStackTrace();
+		}
+		return "";
+	}
 
     @Override
     public void generate(GenerateRequest request, GenerationResult.GenerationResultBuilder builder) {
+    	
+    	if(cachePrompt == null)
+    	{
+    		try {
+        		cachePrompt = loadPromptFromFile();
+    		} catch (IOException e) {
+    			log.error(e.getMessage());
+    			cachePrompt = "";
+    		}
+    	}
+    	
+    	
+    	
         AiProperties.ServerProperties serverProps = aiProperties.getServer();
         String basePkg = serverProps.getBasePackage();
         String provider = aiProperties.getProvider();
@@ -40,6 +75,7 @@ public class ServerGenerator implements StageGenerator {
                 .findFirst()
                 .orElseThrow(() -> new RuntimeException("Unsupported AI provider: " + provider));
 
+        request.setSystemPrompt( request.getSystemPrompt() + "\n\n" + cachePrompt  );
         String content = client.generateContent(request);
         GenerationResult parsed = aiResponseParser.parse(content);
 
@@ -79,4 +115,6 @@ public class ServerGenerator implements StageGenerator {
         file.setContent(content);
         return file;
     }
+
+	
 }
