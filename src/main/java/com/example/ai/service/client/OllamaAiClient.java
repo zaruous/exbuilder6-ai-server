@@ -125,11 +125,19 @@ public class OllamaAiClient implements AiClient {
 
     private List<Map<String, Object>> prepareTools(GenerateRequest request, GenerationSettings settings) {
         List<Map<String, Object>> tools = new ArrayList<>();
-        if (!isMcpEnabled(settings) || aiProperties.getMcp().getServers() == null) return tools;
+        if (!isMcpEnabled(settings) || aiProperties.getMcp() == null || aiProperties.getMcp().getServers() == null) {
+            return tools;
+        }
         
+        List<String> targetServers = (settings != null) ? settings.getMcpServers() : null;
         toolToServerMap.clear();
 
         for (AiProperties.McpServerConfig s : aiProperties.getMcp().getServers()) {
+            // 요청에 특정 서버 목록이 지정된 경우 필터링
+            if (targetServers != null && !targetServers.isEmpty() && !targetServers.contains(s.getName())) {
+                continue;
+            }
+
             try {
                 log.info("Fetching tools from MCP server: {}", s.getName());
                 String response = mcpService.listTools(s);
@@ -142,18 +150,32 @@ public class OllamaAiClient implements AiClient {
                         String name = (String) t.get("name");
                         toolToServerMap.put(name, s);
                         
-                        tools.add(Map.of(
-                            "type", "function",
-                            "function", Map.of(
-                                "name", name,
-                                "description", t.getOrDefault("description", ""),
-                                "parameters", t.getOrDefault("inputSchema", Map.of("type", "object", "properties", Map.of()))
-                            )
+                        Map<String, Object> inputSchema = (Map<String, Object>) t.get("inputSchema");
+                        if (inputSchema == null) {
+                            inputSchema = Map.of("type", "object", "properties", Map.of());
+                        }
+
+                        // Ollama는 'required' 필드가 반드시 문자열 배열(List<String>)이어야 함
+                        Map<String, Object> parameters = new HashMap<>(inputSchema);
+                        if (!parameters.containsKey("required")) {
+                            parameters.put("required", new ArrayList<String>());
+                        } else if (!(parameters.get("required") instanceof List)) {
+                            // required가 리스트가 아닌 경우(예: 빈 객체 등) 강제로 빈 리스트로 교체
+                            parameters.put("required", new ArrayList<String>());
+                        }
+                        
+                        Map<String, Object> tool = new HashMap<>();
+                        tool.put("type", "function");
+                        tool.put("function", Map.of(
+                            "name", name,
+                            "description", t.getOrDefault("description", ""),
+                            "parameters", parameters
                         ));
+                        
+                        tools.add(tool);
                     }
                 }
             } catch (Exception e) {
-            	e.printStackTrace();
                 log.warn("Failed to fetch tools from MCP server {}: {}", s.getName(), e.getMessage());
             }
         }
