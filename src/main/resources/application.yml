@@ -77,6 +77,13 @@ ai:
                 properties:
                   sql: { type: "string" }
                 required: ["sql"]
+            - name: "search_knowledge_base"
+              description: "자연어로 테이블 정의서 및 스키마 지식 베이스를 검색합니다. 테이블명이 모호할 때 사용하세요."
+              inputSchema:
+                type: "object"
+                properties:
+                  query: { type: "string" }
+                required: ["query"]
         # - name: "filesystem-tool"
         #   url: "http://localhost:8002"
         # - name: "maven-agent"

@@ -66,6 +66,14 @@ public class McpService {
                             .retrieve()
                             .bodyToMono(String.class)
                             .block(java.time.Duration.ofSeconds(10));
+
+                case "search_knowledge_base":
+                    String kQuery = (String) arguments.get("query");
+                    return webClient.get()
+                            .uri(baseUrl + "/knowledge/search?q={query}", kQuery)
+                            .retrieve()
+                            .bodyToMono(String.class)
+                            .block(java.time.Duration.ofSeconds(15));
                             
                 case "get_table_schema":
                     String tableName = (String) arguments.get("tableName");
