@@ -94,6 +94,7 @@ public class GenerationServiceTest {
         System.out.println("==================================================\n");
     }
     
+    
     /**
      * 사용자 테이블과 로그인 이력 테이블 검
      */
